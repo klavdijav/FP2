@@ -121,7 +121,18 @@
             let (
                 [e1 (fri (add-e1 e) env)]
                 [e2 (fri (add-e2 e) env)]
-                [get-bool (lambda (v) (if (true? v) #t #f))]
+                [add-qq (lambda (e1 e2) (
+                     let (
+                        [e11 (zz-n (qq-e1 e1))]
+                        [e12 (zz-n (qq-e2 e1))]
+                        [e21 (zz-n (qq-e1 e2))]
+                        [e22 (zz-n (qq-e2 e2))]
+                    )
+                    (fri (qq (zz (+ (* e11 e22) (* e21 e12))) (zz (* e12 e22))) env)
+                ))]
+                [add-cc (lambda (e1 e2) 
+                    (cc (fri (add (cc-e1 e1) (cc-e1 e2)) env) (fri (add (cc-e2 e1) (cc-e2 e2)) env))
+                )]
             )
             (cond 
                 [(and (true? (fri (is-bool? e1) env)) (true? (fri (is-bool? e2) env))) 
@@ -130,52 +141,26 @@
                         (true)
                     )]
                 
-                [(and (true? (fri (is-zz? e1) env)) (true? (fri (is-zz? e2) env))) 
+                [(and (zz? e1) (zz? e2)) 
                     (zz (+ (zz-n e1) (zz-n e2)))]
 
-                [(qq? e1) (
-                    cond 
-                        [(zz? e2) (fri (qq (zz (+ (zz-n (qq-e1 e1)) (zz-n e2))) (qq-e2 e1)) env)]
-                        [(qq? e2) (
-                            let (
-                                [e11 (zz-n (qq-e1 e1))]
-                                [e12 (zz-n (qq-e2 e1))]
-                                [e21 (zz-n (qq-e1 e2))]
-                                [e22 (zz-n (qq-e2 e2))]
-                            )
-                            (fri (qq (zz (+ (* e11 e22) (* e21 e12))) (zz (* e12 e22))) env)
-                        )]
-                        [#t (error "Error: add doesnt support this types.")]
-                )]
-
-                [(qq? e2) (
-                    cond 
-                        [(zz? e1) (fri (qq (zz (+ (zz-n (qq-e1 e2)) (zz-n e1))) (qq-e2 e2)) env)]
-                        ; Ne rabim dodatnega preverjanja ali je prvi element racionalno stevilo, ker se ujame v prejsnji veji.
-                        [#t (error "Error: add doesnt support this types.")]
-                )]
-
-                [(cc? e1) (
-                    cond
-                        [(cc? e2) (cc (fri (add (cc-e1 e1) (cc-e1 e2)) env) (fri (add (cc-e2 e1) (cc-e2 e2)) env))]
-                        [#t (error "Error: wrong type argument.")]
-                )]
-
-                ;[(cc? e2)]
+                [(and (qq? e1) (qq? e2)) (add-qq e1 e2)]
+                [(and (qq? e1) (zz? e2)) (add-qq e1 (qq e2 (zz 1)))]
+                [(and (zz? e1) (qq? e2)) (add-qq (qq e1 (zz 1)) e2)]
+                
+                [(and (cc? e1) (cc? e2)) (add-cc e1 e2)]
+                [(and (cc? e1) (zz? e2)) (add-cc e1 (cc (qq e2 (zz 1)) (qq (zz 0) (zz 1))))]
+                [(and (zz? e1) (cc? e2)) (add-cc (cc (qq e1 (zz 1)) (qq (zz 0) (zz 1))) e2)]
+                [(and (cc? e1) (qq? e2)) (add-cc e1 (cc e2 (qq (zz 0) (zz 1))))]
+                [(and (qq? e1) (cc? e2)) (add-cc (cc e1 (qq (zz 0) (zz 1))) e2)]
 
                 [(and (..? e1) (..? e2)) (
                     letrec (
                         [join (lambda (el)
                             (if (..? el)
                                 (.. (..-e1 el) (join (..-e2 el)))
-                                (.. (last-el e1) (.. (..-e1 e2) (..-e2 e2)))
-                            )
-                        )]
-                        [last-el (lambda (el) 
-                           ( if (..? el)
-                                (last-el (..-e2 el))
-                                el)
-                        )]
+                                (.. el (.. (..-e1 e2) (..-e2 e2)))
+                        ))]
                     )
                     (join e1)
                 )]
@@ -185,10 +170,21 @@
         )]
 
         [(mul? e) (
-            let (
+            letrec (
                 [e1 (fri (mul-e1 e) env)]
                 [e2 (fri (mul-e2 e) env)]
-                [get-bool (lambda (v) (if (true? v) #t #f))]
+                [mul-qq (lambda (e1 e2) 
+                    (fri (qq (zz (* (zz-n (qq-e1 e1)) (zz-n (qq-e1 e2)))) (zz (* (zz-n (qq-e2 e1)) (zz-n (qq-e2 e2))))) env)
+                )]
+                [mul-cc (lambda (e1 e2) (
+                    let (
+                        [ac (mul-qq (cc-e1 e1) (cc-e1 e2))]
+                        [ad (mul-qq (cc-e1 e1) (cc-e2 e2))]
+                        [bc (mul-qq (cc-e2 e1) (cc-e1 e2))]
+                        [bd (mul-qq (cc-e2 e1) (cc-e2 e2))]
+                    )
+                    (cc (fri (add ac (fri (~ bd) env)) env) (fri (add ad bc) env))
+                ))]
             )
             (cond 
                 [(and (true? (fri (is-bool? e1) env)) (true? (fri (is-bool? e2) env))) 
@@ -197,24 +193,18 @@
                         (false)
                 )]
 
-                [(and (true? (fri (is-zz? e1) env)) (true? (fri (is-zz? e2) env))) 
-                    (zz (* (zz-n e1) (zz-n e2)))]
+                [(and (zz? e1) (zz? e2)) (zz (* (zz-n e1) (zz-n e2)))]
 
-                [(qq? e1) (
-                    cond 
-                        [(zz? e2) (fri (qq (zz (* (zz-n (qq-e1 e1)) (zz-n e2))) (qq-e2 e1)) env)]
-                        [(qq? e2) (fri (qq (zz (* (zz-n (qq-e1 e1)) (zz-n (qq-e1 e2)))) (zz (* (zz-n (qq-e2 e1)) (zz-n (qq-e2 e2))))) env)]
-                        [#t (error "Error: add doesnt support this types.")]
-                )]
+                [(and (qq? e1) (qq? e2)) (mul-qq e1 e2)]
+                [(and (qq? e1) (zz? e2)) (mul-qq e1 (qq e2 (zz 1)))]
+                [(and (zz? e1) (qq? e2)) (mul-qq (qq e1 (zz 1)) e2)]
 
-                [(qq? e2) (
-                    cond 
-                        [(zz? e1) (fri (qq (zz (* (zz-n (qq-e1 e2)) (zz-n e1))) (qq-e2 e2)) env)]
-                        [(qq? e1) (fri (qq (zz (* (zz-n (qq-e1 e1)) (zz-n (qq-e1 e2)))) (zz (* (zz-n (qq-e2 e1)) (zz-n (qq-e2 e2))))) env)]
-                        [#t (error "Error: add doesnt support this types.")]
-                )]
-
-                ; KOMPLEKSNA STEVILA
+                [(and (cc? e1) (cc? e2)) (mul-cc e1 e2)]
+                [(and (cc? e1) (qq? e2)) (mul-cc e1 (cc e2 (qq (zz 0) (zz 1))))]
+                [(and (qq? e1) (cc? e2)) (mul-cc (cc e1 (qq (zz 0) (zz 1))) e2)]
+                [(and (cc? e1) (zz? e2)) (mul-cc e1 (cc (qq e2 (zz 1)) (qq (zz 0) (zz 1))))]
+                [(and (zz? e1) (cc? e2)) (mul-cc (cc (qq e1 (zz 1)) (qq (zz 0) (zz 1))) e2)]
+                
 
                 [#t (error "Error: unsupported argument type.")]
             )
@@ -312,9 +302,9 @@
             (cond
                 [(true? e) (false)]
                 [(false? e) (true)]
-                [(zz? e) (zz (- 0 (zz-n e)))]
-                [(qq? e) (qq (zz (- 0 (zz-n (qq-e1 e)))) (qq-e2 e))]
-                [(cc? e) (cc (cc-e1 e) (fri (qq (zz (- 0 (zz-n (qq-e1 (cc-e2 e))))) (qq-e2 (cc-e2 e))) env))]
+                [(zz? e) (zz (- (zz-n e)))]
+                [(qq? e) (qq (zz (- (zz-n (qq-e1 e)))) (qq-e2 e))]
+                [(cc? e) (cc (cc-e1 e) (fri (qq (zz (- (zz-n (qq-e1 (cc-e2 e))))) (qq-e2 (cc-e2 e))) env))]
                 [#t (error "Error: unsupported argument type.")]
             )
         )]
@@ -414,10 +404,14 @@
 (check-equal? (fri (add (false) (true)) 0) (true))
 (check-equal? (fri (add (false) (false)) 0) (false))
 (check-equal? (fri (add (zz 10) (zz 5)) 0) (zz 15))
-(check-equal? (fri (add (qq (zz 1) (zz 3)) (zz 5)) 0) (qq (zz 2) (zz 1)))
+(check-equal? (fri (add (qq (zz 1) (zz 3)) (zz 5)) 0) (qq (zz 16) (zz 3)))
 (check-equal? (fri (add (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4))) 0) (qq (zz 5) (zz 4)))
-(check-equal? (fri (add (zz 5) (qq (zz 1) (zz 3))) 0) (qq (zz 2) (zz 1)))
-(check-equal? (fri (add (zz 10) (qq (zz 1) (zz 3))) 0) (qq (zz 11) (zz 3)))
+(check-equal? (fri (add (zz 5) (qq (zz 1) (zz 3))) 0) (qq (zz 16) (zz 3)))
+(check-equal? (fri (add (zz 10) (qq (zz 5) (zz 5))) 0) (qq (zz 11) (zz 1)))
+(check-equal? (fri (add (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4))) (zz 1)) 0) (cc (qq (zz 3) (zz 2)) (qq (zz 3) (zz 4))))
+(check-equal? (fri (add (zz 1) (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4)))) 0) (cc (qq (zz 3) (zz 2)) (qq (zz 3) (zz 4))))
+(check-equal? (fri (add (qq (zz 1) (zz 3)) (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4)))) 0) (cc (qq (zz 5) (zz 6)) (qq (zz 3) (zz 4))))
+(check-equal? (fri (add (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4))) (qq (zz 1) (zz 3))) 0) (cc (qq (zz 5) (zz 6)) (qq (zz 3) (zz 4))))
 (check-equal? (fri (add (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4))) (cc (qq (zz 1) (zz 3)) (qq (zz 2) (zz 7)))) 0) (cc (qq (zz 5) (zz 6)) (qq (zz 29) (zz 28))))
 (check-equal? (fri (add (.. (zz 1) (.. (zz 2) (.. (zz 3) (zz 7)))) (.. (zz 4) (zz 5))) 0)
     (.. (zz 1) (.. (zz 2) (.. (zz 3) (.. (zz 7) (.. (zz 4) (zz 5)))))))
@@ -430,6 +424,11 @@
 (check-equal? (fri (mul (qq (zz 1) (zz 5)) (zz 5)) 0) (qq (zz 1) (zz 1)))
 (check-equal? (fri (mul (zz 5) (qq (zz 3) (zz 2))) 0) (qq (zz 15) (zz 2)))
 (check-equal? (fri (mul (qq (zz 1) (zz 3)) (qq (zz 4) (zz 7))) 0) (qq (zz 4) (zz 21)))
+(check-equal? (fri (mul (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4))) (zz 1)) 0) (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4))))
+(check-equal? (fri (mul (zz 1) (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4)))) 0) (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4))))
+(check-equal? (fri (mul (qq (zz 1) (zz 2)) (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4)))) 0) (cc (qq (zz 1) (zz 4)) (qq (zz 3) (zz 8))))
+(check-equal? (fri (mul (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4))) (qq (zz 1) (zz 2))) 0) (cc (qq (zz 1) (zz 4)) (qq (zz 3) (zz 8))))
+(check-equal? (fri (mul (cc (qq (zz 1) (zz 2)) (qq (zz 3) (zz 4))) (cc (qq (zz 5) (zz 6)) (qq (zz 7) (zz 8)))) null) (cc (qq (zz -23) (zz 96)) (qq (zz 17) (zz 16))))
 (check-equal? (fri (add (mul (true) (true)) (false)) null) (true))
 
 (check-equal? (fri (leq? (true) (true)) 0) (true))
