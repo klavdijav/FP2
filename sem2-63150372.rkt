@@ -23,8 +23,16 @@
 (struct left (e1) #:transparent)
 (struct right (e1) #:transparent)
 (struct ~ (e1) #:transparent)
-(struct all (e1) #:transparent)
-(struct any (e1) #:transparent)
+(struct all? (e1) #:transparent)
+(struct any? (e1) #:transparent)
+
+(struct vars (s e1 e2) #:transparent)
+(struct valof (s) #:transparent)
+
+(struct fun (name farg body) #:transparent)
+(struct proc (name body) #:transparent)
+(struct closure (env f) #:transparent)
+(struct call (e args) #:transparent)
 
 (define (fri e env)
     (cond 
@@ -61,7 +69,9 @@
         [(empty? e) e]
 
         [(if-then-else? e) (
-            let ([cond (fri (if-then-else-condition e) env)])
+            let* (
+                [cond (fri (if-then-else-condition e) env)]
+            )
             (if (false? cond)
                 (fri (if-then-else-e2 e) env)
                 (fri (if-then-else-e1 e) env)
@@ -118,7 +128,7 @@
         )]
 
         [(add? e) (
-            let (
+            let* (
                 [e1 (fri (add-e1 e) env)]
                 [e2 (fri (add-e2 e) env)]
                 [add-qq (lambda (e1 e2) (
@@ -154,18 +164,20 @@
                 [(and (cc? e1) (qq? e2)) (add-cc e1 (cc e2 (qq (zz 0) (zz 1))))]
                 [(and (qq? e1) (cc? e2)) (add-cc (cc e1 (qq (zz 0) (zz 1))) e2)]
 
-                [(and (..? e1) (..? e2)) (
+                [(and (or (..? e1) (empty? e1)) (or (..? e2) (empty? e2))) (
                     letrec (
                         [join (lambda (el)
-                            (if (..? el)
-                                (.. (..-e1 el) (join (..-e2 el)))
-                                (.. el (.. (..-e1 e2) (..-e2 e2)))
-                        ))]
+                            (cond 
+                                [(..? el) (.. (..-e1 el) (join (..-e2 el)))]
+                                [(empty? el) e2]
+                                [#t (.. el (.. (..-e1 e2) (..-e2 e2)))]
+                            )
+                        )]
                     )
                     (join e1)
                 )]
 
-                [#t (error "Error: wrong type argument.")]
+                [#t (error "Error: wrong type argument ADD.")]
             )
         )]
 
@@ -283,7 +295,7 @@
                 [(qq? e1) (qq-e1 e1)]
                 [(cc? e1) (cc-e1 e1)]
                 [(..? e1) (..-e1 e1)]
-                [#t (error ("Error: unsupported argument type."))]
+                [#t (error "Error: unsupported argument type LEFT.")]
             )
         )]
 
@@ -293,7 +305,7 @@
                 [(qq? e1) (qq-e2 e1)]
                 [(cc? e1) (cc-e2 e1)]
                 [(..? e1) (..-e2 e1)]
-                [#t (error "Error: unsupported argument type.")]
+                [#t (error "Error: unsupported argument type RIGHT.")]
             )
         )]
 
@@ -309,7 +321,7 @@
             )
         )]
 
-        [(all? e) (
+        [(all?? e) (
             letrec (
                 [find-all (lambda (sez) (
                     if (..? sez)
@@ -323,10 +335,10 @@
                         (true)
                 ))]
             )
-            (find-all (fri (all-e1 e) env))
+            (find-all (fri (all?-e1 e) env))
         )]
 
-        [(any? e) (
+        [(any?? e) (
             letrec (
                 [find-any (lambda (sez) (
                     if (..? sez)
@@ -340,16 +352,106 @@
                         (false)
                 ))]
             )
-            (find-any (fri (any-e1 e) env))
+            (find-any (fri (any?-e1 e) env))
+        )]
+
+        [(vars? e) (
+            let (
+                [envlist (
+                    cond 
+                        [(list? (vars-s e)) (
+                            map cons (vars-s e) (map (lambda (exp) (fri exp env)) (vars-e1 e))
+                        )]
+                        [#t (list (cons (vars-s e) (fri (vars-e1 e) env)))]
+                )]
+            )
+            (fri (vars-e2 e) (append envlist env))
+        )]
+
+        [(valof? e) (
+            let (
+                [val (assoc (valof-s e) env)]
+            )
+            (if val 
+                (fri (cdr val) env)
+                (error (~a "Error: variable " (valof-s e) " not found."))
+            )
+        )]
+
+        [(fun? e) (
+            if (check-duplicates (fun-farg e))
+                (error "Error: Duplicate argument names found.")
+                (closure env e)
+        )]
+
+        [(proc? e) e]
+
+        [(call? e) (
+            let* (
+                [exp (fri (call-e e) env)]
+                [args (map (lambda (x) (fri x env)) (call-args e))]
+            )
+            (cond
+                [(closure? exp) 
+                    (fri (fun-body (closure-f exp)) 
+                        (append 
+                            (map cons (fun-farg (closure-f exp)) args)
+                            (list (cons (fun-name (closure-f exp)) (closure-f exp)))
+                            (closure-env exp)
+                        )
+                )]
+                [(proc? exp) (fri (proc-body exp) (append (list (cons (proc-name exp) exp)) env))]
+                [#t (error "Error: Call function accepts only closure or proc argument.")]
+            )
         )]
 
         ; CISTO NA KONCU
-        [#t (error "Error: Unknown command.")]
+        [#t (error (~a "Error: Unknown FRI command." e))]
     )
 )
 
+(define (numerator e1) (left e1))
+(define (denominator e1) (right e1))
+(define (re e1) (left e1))
+(define (im e1) (right e1))
 
+(define (gt? e1 e2) (~(leq? e1 e2)))
+(define (inv e1) (
+    if-then-else (is-zz? e1)
+        (qq (zz 1) e1)
+        (if-then-else (is-qq? e1)
+            (qq (right e1) (left e1))
+            (if-then-else (is-proper-seq? e1)
+                (call (fun "reverse" (list "sez") (
+                    if-then-else (is-empty? (valof "sez"))
+                        (empty)
+                        (add (call (valof "reverse") (list (right (valof "sez")))) (.. (left (valof "sez")) (empty)))
+                )) (list e1))
+                (false)))
+))
 
+;(fri (call (fun "add1" (list "el") (add (valof "el") (zz 1))) (list (zz 3))) null)
+;(fri (mapping (fun "add1" (list "el") (leq? (valof "el") (zz 3))) (.. (zz 2) (.. (zz 4) (.. (zz 6) (.. (zz 8) (empty)))))) null)
+(define (mapping f seq) (
+    call (fun "map" (list "seq") (
+        if-then-else (is-empty? (valof "seq"))
+            (empty)
+            (add (.. (call f (list (left (valof "seq")))) (empty)) (call (valof "map") (list (right (valof "seq")))))
+    )) (list seq)
+))
+
+;(fri (call (fun "add1" (list "el") (leq? (valof "el") (zz 10))) (list (zz 3))) null)
+;(fri (filtering (fun "add1" (list "el") (leq? (mul (valof "el") (zz 2)) (zz 10))) (.. (zz 2) (.. (zz 10) (.. (zz 5) (empty))))) null)
+(define (filtering f seq) (
+    call (fun "filter" (list "seq") (
+        if-then-else (is-empty? (valof "seq"))
+            (empty)
+            (if-then-else (call f (list (left (valof "seq"))))
+                (add (.. (left (valof "seq")) (empty)) (call (valof "filter") (list (right (valof "seq")))))
+                (call (valof "filter") (list (right (valof "seq"))))
+            )
+    )) (list seq)
+))
 
 ; Tests
 (require rackunit)
@@ -486,10 +588,166 @@
 (check-equal? (fri (~ (cc (qq (zz 2) (zz 3)) (qq (zz 9) (zz 3)))) 0) 
     (cc (qq (zz 2) (zz 3)) (qq (zz -3) (zz 1))))
 
-(check-equal? (fri (all (.. (true) (.. (true) (true)))) 0) (true))
-(check-equal? (fri (all (.. (true) (.. (false) (true)))) 0) (false))
-(check-equal? (fri (all (right (.. (zz 1) (.. (zz 2) (empty)))) ) 0) (true))
+(check-equal? (fri (all? (.. (true) (.. (true) (true)))) 0) (true))
+(check-equal? (fri (all? (.. (true) (.. (false) (true)))) 0) (false))
+(check-equal? (fri (all? (right (.. (zz 1) (.. (zz 2) (empty)))) ) 0) (true))
 
-(check-equal? (fri (any (.. (false) (empty))) 0) (false))
-(check-equal? (fri (any (.. (false) (.. (false) (true)))) 0) (true))
-(check-equal? (fri (any (left (.. (.. (add (true) (false)) (false)) (.. (zz 2) (empty)))) ) 0) (true))
+(check-equal? (fri (any? (.. (false) (empty))) 0) (false))
+(check-equal? (fri (any? (.. (false) (.. (false) (true)))) 0) (true))
+(check-equal? (fri (any? (left (.. (.. (add (true) (false)) (false)) (.. (zz 2) (empty)))) ) 0) (true))
+
+
+
+
+
+#| DLESKdoleksdlokeldo ksledkeslkd lsekdselokd djeskidj seikd jse kijdksejdisjdkisejdkisjkijesijsiejsifjaij aki jkfijikfewjikwejik|#
+(require rackunit/text-ui)
+
+(define all-tests
+  (test-suite
+   "all"
+ (test-suite
+  "pulic"
+  (test-case "add1" (check-equal?
+                     (add (mul (true) (true)) (false))
+                     (add (mul (true) (true)) (false))))
+ 
+  (test-case "add2" (check-equal?
+                     (fri (add (mul (true) (true)) (false)) null)
+                     (true)))
+ 
+  (test-case "proper-seq1" (check-equal?
+                            (is-proper-seq? (.. (zz 1) (.. (zz 2) (empty))))
+                            (is-proper-seq? (.. (zz 1) (.. (zz 2) (empty))))))
+ 
+  (test-case "proper-seq2" (check-equal?
+                            (fri (.. (is-proper-seq? (.. (zz 1) (.. (zz 2) (empty))))
+                                     (is-proper-seq? (.. (zz 1) (.. (zz 2) (zz 3))))) null)
+                            (.. (true) (false))))
+ 
+  (test-case "vars-and-complex1" (check-equal?
+                                  (fri (vars "a" (cc (qq (zz 1) (zz 2)) (qq (zz -3) (zz 4)))
+                                             (mul (valof "a") (valof "a"))) null)
+                                  (cc (qq (zz -5) (zz 16)) (qq (zz -3) (zz 4)))))
+ 
+  (test-case "vars-and-complex2" (check-equal?
+                                  (fri (vars (list "a" "b")
+                                             (list (cc (qq (zz 1) (zz 2)) (qq (zz -3) (zz 4)))
+                                                   (~ (cc (qq (zz 1) (zz 2)) (qq (zz -3) (zz 4)))))
+                                             (add (valof "a") (valof "b"))) null)
+                                  (cc (qq (zz 1) (zz 1)) (qq (zz 0) (zz 1)))))
+
+  (test-case "fib1" (check-equal?
+                     (fri (call (fun "fib" (list "n")
+                                     (if-then-else (leq? (valof "n") (zz 2))
+                                                   (zz 1) (add (call (valof "fib")
+                                                                     (list (add (valof "n") (zz -1))))
+                                                               (call (valof "fib")
+                                                                     (list (add (valof "n") (zz -2)))))))
+                                (list (zz 10))) null)
+                     (zz 55)))
+ 
+  (test-case "seq1" (check-equal?
+                     (fri (all? (.. (true) (.. (leq? (false) (true))
+                                               (.. (=? (.. (zz -19) (zz 0))
+                                                       (.. (left (add (qq (zz 1) (zz 5)) (zz -4)))
+                                                           (zz 0)))
+                                                   (empty)))))
+                          null)
+                     (true)))
+ 
+  (test-case "variables1" (check-equal?
+                           (fri (vars (list "a" "b" "c")
+                                      (list (zz 1) (zz 2) (zz 3))
+                                      (fun "linear" (list "x1" "x2" "x3")
+                                           (add (mul (valof "a") (valof "x1"))
+                                                (add (mul (valof "b") (valof "x2"))
+                                                     (mul (valof "c") (valof "x3")))))) null)
+                           (closure (list (cons "a" (zz 1))(cons "b" (zz 2)) (cons "c" (zz 3)))
+                                    (fun "linear" '("x1" "x2" "x3")
+                                         (add (mul (valof "a") (valof "x1"))
+                                              (add (mul (valof "b") (valof "x2"))
+                                                   (mul (valof "c") (valof "x3")))))))))
+ 
+ (test-suite
+  "misc"
+  (test-case "add-seq" (check-equal?
+                        (fri (add (.. (false) (empty))
+                                  (.. (zz 3) (empty))) null)
+                        (.. (false) (.. (zz 3) (empty)))))
+ 
+  (test-case "add-empty" (check-equal?
+                          (fri (add (empty) (empty)) null)
+                          (empty))))
+
+ #| (test-case
+  "long-long"
+  (check-equal?
+   (fri
+    (vars "a" (zz 10)
+          (vars (list "f" "g")
+                (list (fun "" (list "a" "b")
+                           (add (valof "a") (mul (zz 5) (valof "b"))))
+                      (fun "" (list "c")
+                           (add (valof "a") (valof "c"))))
+                (vars (list "a" "d" "g" "e")
+                      (list (zz 1)
+                            (call (valof "g") (list (zz -9)))
+                            (fun "" (list "x")
+                                 (add (valof "a") (mul (valof "x")
+                                                       (call (valof "f")
+                                                             (list (zz 1) (valof "a"))))))
+                            (fun "" (list "f" "x")
+                                 (call (valof "f") (list (valof "x")))))
+                      (vars (list "fib" "test" "unit-fun" "proc")
+                            (list (fun "fib" (list "n")
+                                       (if-then-else (leq? (valof "n") (zz 2))
+                                                     (zz 1)
+                                                     (add (call (valof "fib")
+                                                                (list (add (valof "n")
+                                                                           (zz -1))))
+                                                          (call (valof "fib")
+                                                                (list (add (valof "n")
+                                                                           (zz -2)))))))
+                                  (fun "" (list "x")
+                                       (add (valof "x") (zz 2)))
+                                  
+                                  (fun "" null
+                                       (add (inv (add (valof "a")
+                                                      (valof "a")))
+                                            (valof "a")))
+                                  
+                                  (proc ""
+                                        (folding
+                                         (fun "" (list "x" "acc") (mul (valof "x") (valof "acc")))
+                                         (zz 1)
+                                         (.. (valof "a")
+                                             (.. (zz 2)
+                                                 (.. (zz 3)
+                                                     (.. (zz 4)
+                                                         (.. (call (valof "g")
+                                                                   (list (zz 5)))
+                                                             (empty)))))))))
+                            
+                            
+                            (.. (call (valof "unit-fun") null)
+                                (.. (call (valof "proc") null)
+                                    (add (call (valof "g")
+                                               (list (add (zz 5)
+                                                          (call (valof "test")
+                                                                (list (zz 3))))))
+                                         (add (valof "d")
+                                              (add (call (valof "f")
+                                                         (list (zz -1) (zz -2)))
+                                                   (add (valof "a")
+                                                        (add (call (valof "fib")
+                                                                   (list (zz 5)))
+                                                             (call (valof "e")
+                                                                   (list (valof "test") (zz 3))))))))))))))
+    null)
+   (.. (qq (zz 3) (zz 2)) (.. (zz 6360) (zz 521))))) |#
+   
+   
+   ))
+
+(run-tests all-tests)
